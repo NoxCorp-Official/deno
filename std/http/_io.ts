@@ -1,10 +1,12 @@
 // Copyright 2018-2020 the Deno authors. All rights reserved. MIT license.
+
 import { BufReader, BufWriter } from "../io/bufio.ts";
 import { TextProtoReader } from "../textproto/mod.ts";
 import { assert } from "../_util/assert.ts";
 import { encoder } from "../encoding/utf8.ts";
-import { Response, ServerRequest } from "./server.ts";
+import { HTTPVersion, Response, ServerRequest} from "./server.ts";
 import { STATUS_TEXT } from "./http_status.ts";
+import HTTPMethod from "./_methods/methods.ts";
 
 export function emptyReader(): Deno.Reader {
   return {
@@ -293,13 +295,13 @@ export async function writeResponse(
  * "HTTP/1.0" returns (1, 0).
  * Ported from https://github.com/golang/go/blob/f5c43b9/src/net/http/request.go#L766-L792
  */
-export function parseHTTPVersion(vers: string): [number, number] {
+export function parseHTTPVersion(vers: string): HTTPVersion {
   switch (vers) {
     case "HTTP/1.1":
-      return [1, 1];
+      return {Major: 1, Minor: 1};
 
     case "HTTP/1.0":
-      return [1, 0];
+      return {Major: 1, Minor: 0};
 
     default: {
       const Big = 1000000; // arbitrary upper bound
@@ -314,18 +316,18 @@ export function parseHTTPVersion(vers: string): [number, number] {
       }
 
       const majorStr = vers.substring(vers.indexOf("/") + 1, dot);
-      const major = Number(majorStr);
-      if (!Number.isInteger(major) || major < 0 || major > Big) {
+      const Major = <1|2>Number(majorStr);
+      if (!Number.isInteger(Major) || Major < 0 || Major > Big) {
         break;
       }
 
       const minorStr = vers.substring(dot + 1);
-      const minor = Number(minorStr);
-      if (!Number.isInteger(minor) || minor < 0 || minor > Big) {
+      const Minor = Number(minorStr);
+      if (!Number.isInteger(Minor) || Minor < 0 || Minor > Big) {
         break;
       }
 
-      return [major, minor];
+      return { Major, Minor };
     }
   }
 
@@ -345,8 +347,16 @@ export async function readRequest(
   const req = new ServerRequest();
   req.conn = conn;
   req.r = bufr;
-  [req.method, req.url, req.proto] = firstLine.split(" ", 3);
-  [req.protoMajor, req.protoMinor] = parseHTTPVersion(req.proto);
+  try {
+    const [ method, url, proto ] = firstLine.split(" ", 3);
+    req.protocol = {
+      version: parseHTTPVersion(proto),
+      method: HTTPMethod.get(method),
+      url
+    }
+  } catch (e) {
+    throw new ReferenceError("Bad protocol header for this request.");
+  }
   req.headers = headers;
   fixLength(req);
   return req;
@@ -365,7 +375,7 @@ function fixLength(req: ServerRequest): void {
       }
     }
     const c = req.headers.get("Content-Length");
-    if (req.method === "HEAD" && c && c !== "0") {
+    if (req.protocol.method === HTTPMethod.HEAD && c && c !== "0") {
       throw Error("http: method cannot contain a Content-Length");
     }
     if (c && req.headers.has("transfer-encoding")) {
