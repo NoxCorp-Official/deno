@@ -11,12 +11,47 @@ import {
   writeResponse,
 } from "./_io.ts";
 
+import HTTPMethod from "./_methods/methods.ts";
+
+// Introduce a new variable for listeners/servers
+// Maybe later introduce a new class Server and change the name of this existent
+// by HTTPServer extending a standard Server class with modes and standards designs.
+enum ServerMode {
+  Configuring,
+  Listening,
+  Stopped = 0,
+  // Some protocols have to implements error modes
+  Error = 2
+}
+
+export interface HTTPVersion {
+  Major: 1 | 2;
+  Minor: number;
+}
+
+interface ProtoHTTP {
+  readonly version: HTTPVersion;
+  readonly method?: HTTPMethod;
+  readonly url?: string;
+}
+
+/** Options for creating an HTTP server. */
+export interface HTTPOptions extends Omit<Deno.ListenOptions, "transport"> {
+  NoH2?: true // introduce future variables
+}
+
+export type HTTPSParams = Omit<Deno.ListenTlsOptions, "transport">;
+
+/** Options for creating an HTTPS server. */
+interface HTTPSOptions extends HTTPOptions {
+  https: HTTPSParams;
+}
+
 export class ServerRequest {
-  url!: string;
-  method!: string;
-  proto!: string;
-  protoMinor!: number;
-  protoMajor!: number;
+  protocol!: ProtoHTTP;
+  get url() {
+    return this.protocol.url;
+  }
   headers!: Headers;
   conn!: Deno.Conn;
   r!: BufReader;
@@ -253,9 +288,6 @@ export class Server implements AsyncIterable<ServerRequest> {
   }
 }
 
-/** Options for creating an HTTP server. */
-export type HTTPOptions = Omit<Deno.ListenOptions, "transport">;
-
 /**
  * Parse addr from string
  *
@@ -330,9 +362,6 @@ export async function listenAndServe(
   }
 }
 
-/** Options for creating an HTTPS server. */
-export type HTTPSOptions = Omit<Deno.ListenTlsOptions, "transport">;
-
 /**
  * Create an HTTPS server with given options
  *
@@ -352,7 +381,7 @@ export type HTTPSOptions = Omit<Deno.ListenTlsOptions, "transport">;
  */
 export function serveTLS(options: HTTPSOptions): Server {
   const tlsOptions: Deno.ListenTlsOptions = {
-    ...options,
+    ...options.https,
     transport: "tcp",
   };
   const listener = Deno.listenTls(tlsOptions);
